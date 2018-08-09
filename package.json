@@ -1,0 +1,43 @@
+{
+  "name": "scout-xcode",
+  "version": "0.0.0",
+  "private": true,
+  "author": "Tamara Hills",
+  "scripts": {
+    "start": "node ./bin/www",
+    "test": "npm run lint && npm run unit-test && npm run integ-test",
+    "unit-test": "nyc --reporter=text mocha test/unit && nyc report --reporter=html",
+    "travis-unit": "nyc mocha test/unit && nyc report --reporter=text-lcov | coveralls",
+    "lint": "eslint .",
+    "integ-test": "mocha ./test/integration"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.224.1",
+    "chai": "^4.1.2",
+    "debug": "~2.6.9",
+    "dotenv": "^5.0.1",
+    "eslint": "^4.18.2",
+    "fluent-ffmpeg": "^2.1.2",
+    "glob": "^7.1.2",
+    "node-uuid-generator": "^1.0.0",
+    "nyc": "^11.6.0",
+    "request-promise": "^4.2.2",
+    "universal-analytics": "^0.4.17",
+    "url": "^0.11.0",
+    "winston": "^3.0.0"
+  },
+  "devDependencies": {},
+  "jest": {
+    "coverageDirectory": "./coverage/",
+    "moduleFileExtensions": [
+      "js",
+      "json"
+    ],
+    "testMatch": [
+      "**/test/**/*-test.(js)"
+    ],
+    "mapCoverage": true,
+    "setupTestFrameworkScriptFile": "<rootDir>/test/common.js",
+    "testEnvironment": "node"
+  }
+}
