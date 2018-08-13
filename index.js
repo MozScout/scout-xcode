@@ -61,11 +61,9 @@ var receiveMessage = async function() {
             });
           } catch (err) {
             logger.error('Error: ' + err);
-          } finally {
-            // Always remove from the queue regardless of errors.
-            removeFromQueue(message);
           }
         }
+        removeFromQueue(message);
       }
       receiveMessage();
     } else {
@@ -83,15 +81,18 @@ var receiveMessage = async function() {
  * params: The message to be removed
  */
 var removeFromQueue = function(message) {
-  logger.debug('Removing Message from queue');
+  logger.debug('Removing Message from queue: ' + message.ReceiptHandle);
   sqs.deleteMessage(
     {
       QueueUrl: queueURL,
       ReceiptHandle: message.ReceiptHandle
     },
     function(err, data) {
-      err && logger.error(err);
-      logger.error(data);
+      if (err) {
+        logger.error(err);
+      } else {
+        logger.debug(data);
+      }
     }
   );
 };
