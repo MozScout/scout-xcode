@@ -5,14 +5,14 @@
   "author": "Tamara Hills",
   "scripts": {
     "start": "node ./bin/www",
-    "test": "npm run lint && npm run unit-test && npm run integ-test",
+    "test": "npm run lint",
     "unit-test": "nyc --reporter=text mocha test/unit && nyc report --reporter=html",
     "travis-unit": "nyc mocha test/unit && nyc report --reporter=text-lcov | coveralls",
-    "lint": "eslint .",
-    "integ-test": "mocha ./test/integration"
+    "lint": "eslint ."
   },
   "dependencies": {
     "aws-sdk": "^2.224.1",
+    "babel-eslint": "^8.2.6",
     "chai": "^4.1.2",
     "debug": "~2.6.9",
     "dotenv": "^5.0.1",
@@ -26,7 +26,10 @@
     "url": "^0.11.0",
     "winston": "^3.0.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "aws-mocks": "0.0.15",
+    "aws-sdk-mock": "^4.1.0"
+  },
   "jest": {
     "coverageDirectory": "./coverage/",
     "moduleFileExtensions": [

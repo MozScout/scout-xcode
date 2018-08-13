@@ -19,7 +19,6 @@ AWS.config.update({ region: process.env.AWS_REGION });
 
 //configure ffmpeg
 var ffmpeg = require('fluent-ffmpeg');
-var command = ffmpeg();
 
 // Create an SQS service object
 var sqs = new AWS.SQS({ apiVersion: '2012-11-05' });
@@ -70,6 +69,7 @@ var receiveMessage = async function() {
       }
       receiveMessage();
     } else {
+      logger.debug('No Message');
       setTimeout(function() {
         receiveMessage();
       }, 0);
@@ -91,6 +91,7 @@ var removeFromQueue = function(message) {
     },
     function(err, data) {
       err && logger.error(err);
+      logger.error(data);
     }
   );
 };
@@ -128,11 +129,11 @@ var transcodeFile = function(jsonBody) {
           '-compression_level 10'
         ])
         .output(outputName)
-        .on('error', function(err, stdout, stderr) {
+        .on('error', function(err) {
           logger.error('Cannot process audio: ' + err.message);
           reject(err);
         })
-        .on('end', function(stdout, stderr) {
+        .on('end', function() {
           logger.debug('Transcoding succeeded !');
           resolve(outputName);
         })
@@ -175,7 +176,7 @@ var storeFile = function(opusFilename) {
     logger.debug('startupload: ' + Date.now());
     s3.upload(bucketParams, function(err, data) {
       if (err) {
-        logger.error('error uploading ' + err);
+        logger.error('error uploading ' + err + data);
         reject(err);
       } else {
         logger.debug('Successfully uploaded');
@@ -235,3 +236,5 @@ var checkFileExistence = async function(filename) {
 
 /* start the message loop */
 receiveMessage();
+
+module.exports = receiveMessage;
