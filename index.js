@@ -48,7 +48,7 @@ var receiveMessage = async function() {
     if (err) {
       logger.error(err);
     }
-    if (data.Messages) {
+    if (data && data.Messages) {
       for (var i = 0; i < data.Messages.length; i++) {
         var message = data.Messages[i];
         let jsonBody = JSON.parse(message.Body);
