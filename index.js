@@ -11,6 +11,7 @@
 
 const logger = require('./logger');
 const fs = require('fs');
+require('dotenv').config();
 
 // Load the AWS SDK for Node.js
 var AWS = require('aws-sdk');
