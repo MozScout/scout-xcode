@@ -11,26 +11,60 @@
 
 const logger = require('./logger');
 const fs = require('fs');
+const AWS = require('aws-sdk');
+const ffmpeg = require('fluent-ffmpeg');
 require('dotenv').config();
 
-// Load the AWS SDK for Node.js
-var AWS = require('aws-sdk');
 // Set the region
 AWS.config.update({ region: process.env.AWS_REGION });
 
-//configure ffmpeg
-var ffmpeg = require('fluent-ffmpeg');
-
 // Create an SQS service object
-var sqs = new AWS.SQS({ apiVersion: '2012-11-05' });
-var queueURL = process.env.SQS_QUEUE;
-var sqsParams = {
+const sqs = new AWS.SQS({ apiVersion: '2012-11-05' });
+const queueURL = process.env.SQS_QUEUE;
+const QUEUE_RETRY_COUNT = 3;
+const sqsParams = {
   AttributeNames: ['SentTimestamp'],
   MaxNumberOfMessages: 1,
   MessageAttributeNames: ['All'],
   QueueUrl: queueURL,
   VisibilityTimeout: 20,
   WaitTimeSeconds: 5
+};
+
+/* 
+ * Initializing the queue by specifying the retry policy
+ * and the dead letter queue where failed messages should 
+ * be moved to for later review.
+ */
+const initQueue = async () => {
+  logger.debug('Initializing queue');
+
+  return new Promise((resolve, reject) => {
+    // Configure dead letter queue
+    if (process.env.SQS_DLQ_ARN) {
+      const params = {
+        Attributes: {
+          RedrivePolicy: `{"deadLetterTargetArn":"${
+            process.env.SQS_DLQ_ARN
+          }","maxReceiveCount":"${QUEUE_RETRY_COUNT}"}`
+        },
+        QueueUrl: queueURL
+      };
+
+      sqs.setQueueAttributes(params, (err, data) => {
+        if (err) {
+          logger.error('DLQ setup error:', err);
+        } else {
+          logger.debug(`DLQ configured @${process.env.SQS_DLQ_ARN}`);
+        }
+        resolve();
+      });
+    } else {
+      reject(
+        `DLQ address not specified in env. Cannot initialize mesage queue.`
+      );
+    }
+  });
 };
 
 /*
@@ -41,34 +75,56 @@ var sqsParams = {
  * modified to handle more.  The target bit rate of the opus
  * codec is an environment variable.  This removes any existing
  * messages from the queue and transcodes them and then goes
- * back into a wait state for more incoming requests
+ * back into a wait state for more incoming requests. 
+ * If there is an error in message processing, the message is 
+ * left in the queue for retry.
  */
-var receiveMessage = async function() {
+const receiveMessage = () => {
   sqs.receiveMessage(sqsParams, async function(err, data) {
-    logger.debug('receive loop');
+    logger.debug('.');
     if (err) {
       logger.error(err);
     }
     if (data && data.Messages) {
-      for (var i = 0; i < data.Messages.length; i++) {
-        var message = data.Messages[i];
-        let jsonBody = JSON.parse(message.Body);
-        logger.debug(jsonBody.filename);
+      data.Messages.forEach(async message => {
+        let messageProcessed = false;
+        logger.debug('message:', message);
+
+        // validate message format
+        let jsonBody;
+        try {
+          jsonBody = JSON.parse(message.Body);
+          if (!jsonBody.filename) {
+            throw `Expected "filename" value in message `;
+          }
+          logger.debug(`Filename: ${jsonBody.filename}`);
+        } catch (err) {
+          logger.error(`Message format err: ${err}`);
+          return;
+        }
+
         // Check if the file is there already
-        if (!(await checkFileExistence(jsonBody.filename))) {
+        const fileExists = await checkFileExistence(jsonBody.filename);
+        if (fileExists) {
+          messageProcessed = true;
+        } else {
           try {
-            transcodeFile(jsonBody).then(function(newFileName) {
+            transcodeFile(jsonBody).then(newFileName => {
               storeFile(newFileName);
+              messageProcessed = true;
             });
           } catch (err) {
             logger.error('Error: ' + err);
           }
         }
-        removeFromQueue(message);
-      }
+
+        if (messageProcessed) {
+          removeFromQueue(message);
+        }
+      });
+
       receiveMessage();
     } else {
-      logger.debug('No Message');
       setTimeout(function() {
         receiveMessage();
       }, 0);
@@ -237,6 +293,12 @@ var checkFileExistence = async function(filename) {
 };
 
 /* start the message loop */
-receiveMessage();
-
-module.exports = receiveMessage;
+initQueue().then(
+  () => {
+    logger.debug('Starting message loop');
+    receiveMessage();
+  },
+  error => {
+    logger.error(error);
+  }
+);
