@@ -37,7 +37,7 @@ const sqsParams = {
  * be moved to for later review.
  */
 const initQueue = async () => {
-  logger.debug('initializing queue');
+  logger.debug('Initializing queue');
 
   return new Promise((resolve, reject) => {
     // Configure dead letter queue
@@ -55,7 +55,7 @@ const initQueue = async () => {
         if (err) {
           logger.error('DLQ setup error:', err);
         } else {
-          logger.debug('DLQ configured:', data);
+          logger.debug(`DLQ configured @${process.env.SQS_DLQ_ARN}`);
         }
         resolve();
       });
@@ -90,12 +90,16 @@ const receiveMessage = () => {
         let messageProcessed = false;
         logger.debug('message:', message);
 
+        // validate message format
         let jsonBody;
         try {
           jsonBody = JSON.parse(message.Body);
+          if (!jsonBody.filename) {
+            throw `Expected "filename" value in message `;
+          }
           logger.debug(`Filename: ${jsonBody.filename}`);
         } catch (err) {
-          logger.error(`JSON parse err: ${err}`);
+          logger.error(`Message format err: ${err}`);
           return;
         }
 
