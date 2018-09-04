@@ -16,8 +16,6 @@ This link has a good description of how to install ffmpeg on both ubuntu and deb
 AWS_REGION=us-east-1  // Use the same region as the scout-ua server
 OPUS_BIT_RATE=24000
 POLLY_S3_BUCKET=      // Must match the POLLY_S3_BUCKET value used by the scout-ua server
-SQS_QUEUE=            // The full URL of an SQS message queue
-SQS_DLQ_ARN=          // The arn (*not* URL) of a second FIFO queue to serve as the dead letter queue
-                      // for messages that cannot be processed correctly. Must be the same type (FIFO)
-                      // and located in same region as the primary SQS queue
+SQS_QUEUE=            // The full URL of the SQS FIFO message queue where scout-ua sends transcode requests
+SQS_FAILURE_QUEUE     // Full URL of an SQS FIFO queue where failed messages will be stored for later review
 ```

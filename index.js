@@ -13,59 +13,24 @@ const logger = require('./logger');
 const fs = require('fs');
 const AWS = require('aws-sdk');
 const ffmpeg = require('fluent-ffmpeg');
+const SqsQueue = require('./SqsQueue');
 require('dotenv').config();
 
-// Set the region
+// Set up SQS & queues
 AWS.config.update({ region: process.env.AWS_REGION });
-
-// Create an SQS service object
 const sqs = new AWS.SQS({ apiVersion: '2012-11-05' });
-const queueURL = process.env.SQS_QUEUE;
-const QUEUE_RETRY_COUNT = 3;
+const messageQueueURL = process.env.SQS_QUEUE;
 const sqsParams = {
   AttributeNames: ['SentTimestamp'],
   MaxNumberOfMessages: 1,
   MessageAttributeNames: ['All'],
-  QueueUrl: queueURL,
+  QueueUrl: messageQueueURL,
   VisibilityTimeout: 20,
   WaitTimeSeconds: 5
 };
 
-/* 
- * Initializing the queue by specifying the retry policy
- * and the dead letter queue where failed messages should 
- * be moved to for later review.
- */
-const initQueue = async () => {
-  logger.debug('Initializing queue');
-
-  return new Promise((resolve, reject) => {
-    // Configure dead letter queue
-    if (process.env.SQS_DLQ_ARN) {
-      const params = {
-        Attributes: {
-          RedrivePolicy: `{"deadLetterTargetArn":"${
-            process.env.SQS_DLQ_ARN
-          }","maxReceiveCount":"${QUEUE_RETRY_COUNT}"}`
-        },
-        QueueUrl: queueURL
-      };
-
-      sqs.setQueueAttributes(params, (err, data) => {
-        if (err) {
-          logger.error('DLQ setup error:', err);
-        } else {
-          logger.debug(`DLQ configured @${process.env.SQS_DLQ_ARN}`);
-        }
-        resolve();
-      });
-    } else {
-      reject(
-        `DLQ address not specified in env. Cannot initialize mesage queue.`
-      );
-    }
-  });
-};
+const failureQueueURL = process.env.SQS_FAILURE_QUEUE;
+const failQueue = new SqsQueue(failureQueueURL, 'scout');
 
 /*
  * Main message processing loop.  It receives messages of the
@@ -87,8 +52,7 @@ const receiveMessage = () => {
     }
     if (data && data.Messages) {
       data.Messages.forEach(async message => {
-        let messageProcessed = false;
-        logger.debug('message:', message);
+        logger.debug('Received message:', message);
 
         // validate message format
         let jsonBody;
@@ -100,27 +64,24 @@ const receiveMessage = () => {
           logger.debug(`Filename: ${jsonBody.filename}`);
         } catch (err) {
           logger.error(`Message format err: ${err}`);
-          return;
+          addToFailureQueue(message, err);
         }
 
-        // Check if the file is there already
-        const fileExists = await checkFileExistence(jsonBody.filename);
-        if (fileExists) {
-          messageProcessed = true;
-        } else {
-          try {
-            transcodeFile(jsonBody).then(newFileName => {
-              storeFile(newFileName);
-              messageProcessed = true;
-            });
-          } catch (err) {
-            logger.error('Error: ' + err);
+        // create transcode request if the file doesn't already exist
+        if (jsonBody && jsonBody.filename) {
+          const fileExists = await checkFileExistence(jsonBody.filename);
+          if (!fileExists) {
+            try {
+              const newFileName = await transcodeFile(jsonBody);
+              await storeFile(newFileName);
+            } catch (err) {
+              logger.error(`Transcoding error: ${err}`);
+              addToFailureQueue(message, err);
+            }
           }
         }
 
-        if (messageProcessed) {
-          removeFromQueue(message);
-        }
+        removeFromMessageQueue(message);
       });
 
       receiveMessage();
@@ -137,11 +98,11 @@ const receiveMessage = () => {
  * 
  * params: The message to be removed
  */
-var removeFromQueue = function(message) {
+const removeFromMessageQueue = function(message) {
   logger.debug('Removing Message from queue: ' + message.ReceiptHandle);
   sqs.deleteMessage(
     {
-      QueueUrl: queueURL,
+      QueueUrl: messageQueueURL,
       ReceiptHandle: message.ReceiptHandle
     },
     function(err, data) {
@@ -152,6 +113,14 @@ var removeFromQueue = function(message) {
       }
     }
   );
+};
+
+const addToFailureQueue = (message, error) => {
+  const failureInfo = {
+    message,
+    error: error ? error.toString() : 'unknown'
+  };
+  failQueue.add(failureInfo);
 };
 
 /*
@@ -166,7 +135,7 @@ var removeFromQueue = function(message) {
  *    resolve - able to transcode
  *    reject - could not process the audio
  */
-var transcodeFile = function(jsonBody) {
+const transcodeFile = function(jsonBody) {
   return new Promise((resolve, reject) => {
     logger.debug('Calling transcodeFile');
     let url =
@@ -212,23 +181,24 @@ var transcodeFile = function(jsonBody) {
  *    resolved - file was uploaded
  *    rejected - unable to upload
  */
-var storeFile = function(opusFilename) {
+const storeFile = function(opusFilename) {
+  logger.debug(`storeFile: ${opusFilename}`);
   return new Promise((resolve, reject) => {
-    var s3 = new AWS.S3({
+    const s3 = new AWS.S3({
       apiVersion: '2006-03-01'
     });
-    var bucketParams = {
+    const bucketParams = {
       Bucket: process.env.POLLY_S3_BUCKET,
       Key: '',
       Body: ''
     };
 
-    var fileStream = fs.createReadStream(opusFilename);
+    const fileStream = fs.createReadStream(opusFilename);
     fileStream.on('error', function(err) {
       reject(err);
     });
     bucketParams.Body = fileStream;
-    var path = require('path');
+    const path = require('path');
     bucketParams.Key = path.basename(opusFilename);
 
     logger.debug('startupload: ' + Date.now());
@@ -263,8 +233,8 @@ var storeFile = function(opusFilename) {
  *  true - file exists
  *  false - does not exist
  */
-var checkFileExistence = async function(filename) {
-  var s3 = new AWS.S3({
+const checkFileExistence = async function(filename) {
+  const s3 = new AWS.S3({
     apiVersion: '2006-03-01'
   });
 
@@ -272,8 +242,9 @@ var checkFileExistence = async function(filename) {
   if (filename) {
     let outputName = filename.replace('mp3', 'opus');
 
-    logger.debug(`Checking location for: ${outputName}`);
-    logger.debug(process.env.POLLY_S3_BUCKET);
+    logger.debug(
+      `Checking ${process.env.POLLY_S3_BUCKET} bucket for: ${outputName}`
+    );
     const params = {
       Bucket: process.env.POLLY_S3_BUCKET,
       Key: outputName
@@ -293,12 +264,11 @@ var checkFileExistence = async function(filename) {
 };
 
 /* start the message loop */
-initQueue().then(
-  () => {
-    logger.debug('Starting message loop');
-    receiveMessage();
-  },
-  error => {
-    logger.error(error);
-  }
-);
+logger.debug(`Message queue: ${messageQueueURL}`);
+logger.debug(`Failure queue: ${failureQueueURL}`);
+if (!messageQueueURL || !failureQueueURL) {
+  logger.error(`Queue URL(s) missing. Cannot initialize mesage queue.`);
+} else {
+  logger.info('Staring message loop...');
+  receiveMessage();
+}
