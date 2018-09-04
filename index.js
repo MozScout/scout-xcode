@@ -65,19 +65,18 @@ const receiveMessage = () => {
         }
 
         // create transcode request if the file doesn't already exist
-        logger.debug(`Received message with filename: ${jsonBody.filename}`);
+        logger.info(`Received message with filename: ${jsonBody.filename}`);
         if (jsonBody && jsonBody.filename) {
           const fileExists = await checkFileExistence(jsonBody.filename);
           if (!fileExists) {
-            try {
-              transcodeFile(jsonBody.filename).then(newFileName =>
-                storeFile(newFileName)
-              );
-            } catch (err) {
-              const errString = `Transcoding error: ${err}`;
-              logger.error(errString);
-              addToFailureQueue(message, errString);
-            }
+            transcodeFile(jsonBody.filename)
+              .then(newFileName => {
+                storeFile(newFileName);
+              })
+              .catch(err => {
+                const errString = `Transcoding error: ${err}`;
+                addToFailureQueue(message, errString);
+              });
           }
         }
 
