@@ -268,6 +268,6 @@ logger.debug(`Failure queue: ${failureQueueURL}`);
 if (!messageQueueURL || !failureQueueURL) {
   logger.error(`Queue URL(s) missing. Cannot initialize mesage queue.`);
 } else {
-  logger.info('Staring message loop...');
+  logger.info('Starting message loop...');
   receiveMessage();
 }
