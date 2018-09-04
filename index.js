@@ -52,8 +52,6 @@ const receiveMessage = () => {
     }
     if (data && data.Messages) {
       data.Messages.forEach(async message => {
-        logger.debug('Received message:', message);
-
         // validate message format
         let jsonBody;
         try {
@@ -61,13 +59,13 @@ const receiveMessage = () => {
           if (!jsonBody.filename) {
             throw `Expected "filename" value in message `;
           }
-          logger.debug(`Filename: ${jsonBody.filename}`);
         } catch (err) {
           logger.error(`Message format err: ${err}`);
           addToFailureQueue(message, err);
         }
 
         // create transcode request if the file doesn't already exist
+        logger.debug(`Received message with filename: ${jsonBody.filename}`);
         if (jsonBody && jsonBody.filename) {
           const fileExists = await checkFileExistence(jsonBody.filename);
           if (!fileExists) {
@@ -76,8 +74,9 @@ const receiveMessage = () => {
                 storeFile(newFileName)
               );
             } catch (err) {
-              logger.error(`Transcoding error: ${err}`);
-              addToFailureQueue(message, err);
+              const errString = `Transcoding error: ${err}`;
+              logger.error(errString);
+              addToFailureQueue(message, errString);
             }
           }
         }
@@ -100,7 +99,6 @@ const receiveMessage = () => {
  * params: The message to be removed
  */
 const removeFromMessageQueue = function(message) {
-  logger.debug('Removing Message from queue: ' + message.ReceiptHandle);
   sqs.deleteMessage(
     {
       QueueUrl: messageQueueURL,
@@ -108,7 +106,9 @@ const removeFromMessageQueue = function(message) {
     },
     function(err) {
       if (err) {
-        logger.error(err);
+        const errString = `removeFromMessageQueue error: ${err}`;
+        logger.error(errString);
+        addToFailureQueue(message, errString);
       }
     }
   );
@@ -144,7 +144,9 @@ const transcodeFile = function(filename) {
       filename;
 
     let outputName = './' + filename.replace('mp3', 'opus');
-    logger.debug(`Transcode filename: ${url} to ${outputName}`);
+    logger.debug(`Launching transcode process =>
+      from: ${url} 
+      to:   ${outputName}`);
     try {
       ffmpeg(url)
         .outputOptions([
@@ -159,7 +161,7 @@ const transcodeFile = function(filename) {
           reject(err);
         })
         .on('end', function() {
-          logger.debug(`Transcoding succeeded for ${outputName}!`);
+          logger.info(`Transcoding succeeded for ${outputName}`);
           resolve(outputName);
         })
         .run();
@@ -202,10 +204,12 @@ const storeFile = function(opusFilename) {
     logger.debug(`startupload of ${opusFilename}: ${Date.now()}`);
     s3.upload(bucketParams, function(err, data) {
       if (err) {
-        logger.error('error uploading ' + err + data);
+        logger.error(
+          `Error uploading ${opusFilename}, err=${err}, data=${data}`
+        );
         reject(err);
       } else {
-        logger.debug('Successfully uploaded');
+        logger.debug(`Successfully uploaded ${opusFilename}`);
         //Don't make the resolution of the promise dependent on
         //deleting the local file just on the off chance we get
         //a duplicate request.
@@ -213,9 +217,9 @@ const storeFile = function(opusFilename) {
         // Remove the files locally.
         fs.unlink(opusFilename, err => {
           if (err) {
-            logger.error('failed to delete file:' + err);
+            logger.error(`failed to delete file ${opusFilename}: ${err}`);
           } else {
-            logger.debug('successfully deleted local file');
+            logger.debug(`Successfully deleted local file ${opusFilename}`);
           }
         });
       }
