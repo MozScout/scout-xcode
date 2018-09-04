@@ -72,8 +72,9 @@ const receiveMessage = () => {
           const fileExists = await checkFileExistence(jsonBody.filename);
           if (!fileExists) {
             try {
-              const newFileName = await transcodeFile(jsonBody);
-              await storeFile(newFileName);
+              transcodeFile(jsonBody.filename).then(newFileName =>
+                storeFile(newFileName)
+              );
             } catch (err) {
               logger.error(`Transcoding error: ${err}`);
               addToFailureQueue(message, err);
@@ -134,18 +135,16 @@ const addToFailureQueue = (message, error) => {
  *    resolve - able to transcode
  *    reject - could not process the audio
  */
-const transcodeFile = function(jsonBody) {
+const transcodeFile = function(filename) {
   return new Promise((resolve, reject) => {
-    logger.debug('Calling transcodeFile');
     let url =
       'https://s3.amazonaws.com/' +
       process.env.POLLY_S3_BUCKET +
       '/' +
-      jsonBody.filename;
+      filename;
 
-    logger.debug('filename: ' + url);
-    let outputName = './' + jsonBody.filename.replace('mp3', 'opus');
-    logger.debug('new filename: ' + outputName);
+    let outputName = './' + filename.replace('mp3', 'opus');
+    logger.debug(`Transcode filename: ${url} to ${outputName}`);
     try {
       ffmpeg(url)
         .outputOptions([
@@ -160,12 +159,12 @@ const transcodeFile = function(jsonBody) {
           reject(err);
         })
         .on('end', function() {
-          logger.debug('Transcoding succeeded !');
+          logger.debug(`Transcoding succeeded for ${outputName}!`);
           resolve(outputName);
         })
         .run();
     } catch (err) {
-      logger.error('error is: ' + err);
+      logger.error('Transcode error: ' + err);
       reject(err);
     }
   });
@@ -200,7 +199,7 @@ const storeFile = function(opusFilename) {
     const path = require('path');
     bucketParams.Key = path.basename(opusFilename);
 
-    logger.debug('startupload: ' + Date.now());
+    logger.debug(`startupload of ${opusFilename}: ${Date.now()}`);
     s3.upload(bucketParams, function(err, data) {
       if (err) {
         logger.error('error uploading ' + err + data);
@@ -255,7 +254,7 @@ const checkFileExistence = async function(filename) {
       logger.debug('Verified existing file');
       return true;
     } catch (err) {
-      logger.debug('File does not exist: ' + err);
+      logger.debug('File does not exist.');
       return false;
     }
   }
