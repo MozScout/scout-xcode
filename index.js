@@ -105,11 +105,9 @@ const removeFromMessageQueue = function(message) {
       QueueUrl: messageQueueURL,
       ReceiptHandle: message.ReceiptHandle
     },
-    function(err, data) {
+    function(err) {
       if (err) {
         logger.error(err);
-      } else {
-        logger.debug(data);
       }
     }
   );
@@ -120,6 +118,7 @@ const addToFailureQueue = (message, error) => {
     message,
     error: error ? error.toString() : 'unknown'
   };
+  logger.debug(`Adding item to failure queue: ${failureInfo.error}`);
   failQueue.add(failureInfo);
 };
 
