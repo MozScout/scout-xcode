@@ -52,8 +52,9 @@ const receiveMessage = () => {
     }
     if (data && data.Messages) {
       data.Messages.forEach(async message => {
-        // validate message format
         let jsonBody;
+
+        // validate message format
         try {
           jsonBody = JSON.parse(message.Body);
           if (!jsonBody.filename) {
@@ -61,34 +62,28 @@ const receiveMessage = () => {
           }
         } catch (err) {
           logger.error(`Message format err: ${err}`);
-          addToFailureQueue(message, err);
+          await addToFailureQueue(message, err);
         }
 
         // create transcode request if the file doesn't already exist
-        logger.info(`Received message with filename: ${jsonBody.filename}`);
         if (jsonBody && jsonBody.filename) {
+          logger.info(`Received message with filename: ${jsonBody.filename}`);
           const fileExists = await checkFileExistence(jsonBody.filename);
           if (!fileExists) {
-            transcodeFile(jsonBody.filename)
-              .then(newFileName => {
-                storeFile(newFileName);
-              })
-              .catch(err => {
-                const errString = `Transcoding error: ${err}`;
-                addToFailureQueue(message, errString);
-              });
+            try {
+              const newFileName = await transcodeFile(jsonBody.filename);
+              await storeFile(newFileName);
+            } catch (err) {
+              const errString = `Transcoding error: ${err}`;
+              await addToFailureQueue(message, errString, jsonBody.filename);
+            }
           }
         }
 
         removeFromMessageQueue(message);
       });
-
-      receiveMessage();
-    } else {
-      setTimeout(function() {
-        receiveMessage();
-      }, 0);
     }
+    setTimeout(receiveMessage, 0);
   });
 };
 
@@ -97,7 +92,7 @@ const receiveMessage = () => {
  * 
  * params: The message to be removed
  */
-const removeFromMessageQueue = function(message) {
+const removeFromMessageQueue = message => {
   sqs.deleteMessage(
     {
       QueueUrl: messageQueueURL,
@@ -105,21 +100,20 @@ const removeFromMessageQueue = function(message) {
     },
     function(err) {
       if (err) {
-        const errString = `removeFromMessageQueue error: ${err}`;
-        logger.error(errString);
-        addToFailureQueue(message, errString);
+        logger.error(`removeFromMessageQueue error: ${err}`);
       }
     }
   );
 };
 
-const addToFailureQueue = (message, error) => {
+const addToFailureQueue = async (message, error, filename) => {
   const failureInfo = {
-    message,
-    error: error ? error.toString() : 'unknown'
+    originalMessage: message,
+    error: error ? error.toString() : 'unknown',
+    filename
   };
   logger.debug(`Adding item to failure queue: ${failureInfo.error}`);
-  failQueue.add(failureInfo);
+  await failQueue.add(failureInfo);
 };
 
 /*

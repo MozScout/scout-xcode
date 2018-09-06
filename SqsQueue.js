@@ -3,8 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
-
-const logger = require('./logger');
 var uuidgen = require('node-uuid-generator');
 var AWS = require('aws-sdk');
 require('dotenv').config();
@@ -20,18 +18,21 @@ class SqsQueue {
   }
 
   add(messageObj) {
-    const params = {
-      MessageAttributes: {},
-      MessageGroupId: this.groupId,
-      MessageDeduplicationId: uuidgen.generate(),
-      MessageBody: JSON.stringify(messageObj),
-      QueueUrl: this.url
-    };
+    return new Promise((resolve, reject) => {
+      const params = {
+        MessageAttributes: {},
+        MessageGroupId: this.groupId,
+        MessageDeduplicationId: uuidgen.generate(),
+        MessageBody: JSON.stringify(messageObj),
+        QueueUrl: this.url
+      };
 
-    sqs.sendMessage(params, function(err) {
-      if (err) {
-        logger.error('SQS send error', err);
-      }
+      sqs.sendMessage(params, function(err) {
+        if (err) {
+          reject('SQS send error', err);
+        }
+        resolve();
+      });
     });
   }
 }
