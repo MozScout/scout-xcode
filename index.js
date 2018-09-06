@@ -44,6 +44,7 @@ const failQueue = new SqsQueue(failureQueueURL, 'scout');
  * If there is an error in message processing, the message is 
  * left in the queue for retry.
  */
+let transcodeInProgress = false;
 const receiveMessage = () => {
   sqs.receiveMessage(sqsParams, async function(err, data) {
     logger.debug('.');
@@ -54,33 +55,38 @@ const receiveMessage = () => {
       data.Messages.forEach(async message => {
         let jsonBody;
 
-        // validate message format
-        try {
-          jsonBody = JSON.parse(message.Body);
-          if (!jsonBody.filename) {
-            throw `Expected "filename" value in message `;
+        if (transcodeInProgress) {
+          logger.debug('(defer message due to transcodeInProgress)');
+        } else {
+          // validate message format
+          try {
+            jsonBody = JSON.parse(message.Body);
+            if (!jsonBody.filename) {
+              throw `Expected "filename" value in message `;
+            }
+          } catch (err) {
+            logger.error(`Message format err: ${err}`);
+            await addToFailureQueue(message, err);
           }
-        } catch (err) {
-          logger.error(`Message format err: ${err}`);
-          await addToFailureQueue(message, err);
-        }
 
-        // create transcode request if the file doesn't already exist
-        if (jsonBody && jsonBody.filename) {
-          logger.info(`Received message with filename: ${jsonBody.filename}`);
-          const fileExists = await checkFileExistence(jsonBody.filename);
-          if (!fileExists) {
-            try {
-              const newFileName = await transcodeFile(jsonBody.filename);
-              await storeFile(newFileName);
-            } catch (err) {
-              const errString = `Transcoding error: ${err}`;
-              await addToFailureQueue(message, errString, jsonBody.filename);
+          // create transcode request if the file doesn't already exist
+          if (jsonBody && jsonBody.filename) {
+            logger.info(`Received message with filename: ${jsonBody.filename}`);
+            const fileExists = await checkFileExistence(jsonBody.filename);
+            if (!fileExists) {
+              try {
+                transcodeInProgress = true;
+                const newFileName = await transcodeFile(jsonBody.filename);
+                transcodeInProgress = false;
+                await storeFile(newFileName);
+              } catch (err) {
+                const errString = `Transcoding error: ${err}`;
+                await addToFailureQueue(message, errString, jsonBody.filename);
+              }
             }
           }
+          removeFromMessageQueue(message);
         }
-
-        removeFromMessageQueue(message);
       });
     }
     setTimeout(receiveMessage, 0);
