@@ -44,51 +44,53 @@ const failQueue = new SqsQueue(failureQueueURL, 'scout');
  * If there is an error in message processing, the message is 
  * left in the queue for retry.
  */
+let transcodeInProgress = false;
 const receiveMessage = () => {
+  logger.debug('.');
   sqs.receiveMessage(sqsParams, async function(err, data) {
-    logger.debug('.');
     if (err) {
       logger.error(err);
     }
     if (data && data.Messages) {
       data.Messages.forEach(async message => {
-        // validate message format
         let jsonBody;
-        try {
-          jsonBody = JSON.parse(message.Body);
-          if (!jsonBody.filename) {
-            throw `Expected "filename" value in message `;
-          }
-        } catch (err) {
-          logger.error(`Message format err: ${err}`);
-          handleMessageFailure(message, err);
-        }
 
-        // create transcode request if the file doesn't already exist
-        logger.info(`Received message with filename: ${jsonBody.filename}`);
-        if (jsonBody && jsonBody.filename) {
-          const fileExists = await checkFileExistence(jsonBody.filename);
-          if (!fileExists) {
-            transcodeFile(jsonBody.filename)
-              .then(newFileName => {
-                storeFile(newFileName);
-              })
-              .catch(err => {
+        if (transcodeInProgress) {
+          logger.debug('(defer message due to transcodeInProgress)');
+        } else {
+          // validate message format
+          try {
+            jsonBody = JSON.parse(message.Body);
+            if (!jsonBody.filename) {
+              throw `Expected "filename" value in message `;
+            }
+          } catch (err) {
+            logger.error(`Message format err: ${err}`);
+            await addToFailureQueue(message, err);
+          }
+
+          // create transcode request if the file doesn't already exist
+          if (jsonBody && jsonBody.filename) {
+            logger.info(`Received message with filename: ${jsonBody.filename}`);
+            const fileExists = await checkFileExistence(jsonBody.filename);
+            if (!fileExists) {
+              try {
+                transcodeInProgress = true;
+                const newFileName = await transcodeFile(jsonBody.filename);
+                await storeFile(newFileName);
+              } catch (err) {
                 const errString = `Transcoding error: ${err}`;
-                handleMessageFailure(message, errString);
-              });
+                await addToFailureQueue(message, errString, jsonBody.filename);
+              } finally {
+                transcodeInProgress = false;
+              }
+            }
           }
+          removeFromMessageQueue(message);
         }
-
-        removeFromMessageQueue(message);
       });
-
-      receiveMessage();
-    } else {
-      setTimeout(function() {
-        receiveMessage();
-      }, 0);
     }
+    setTimeout(receiveMessage, 0);
   });
 };
 
@@ -97,7 +99,7 @@ const receiveMessage = () => {
  * 
  * params: The message to be removed
  */
-const removeFromMessageQueue = function(message) {
+const removeFromMessageQueue = message => {
   sqs.deleteMessage(
     {
       QueueUrl: messageQueueURL,
@@ -105,23 +107,20 @@ const removeFromMessageQueue = function(message) {
     },
     function(err) {
       if (err) {
-        const errString = `removeFromMessageQueue error: ${err}`;
-        logger.error(errString);
-        handleMessageFailure(message, errString);
+        logger.error(`removeFromMessageQueue error: ${err}`);
       }
     }
   );
 };
 
-const handleMessageFailure = (message, error) => {
+const addToFailureQueue = async (message, error, filename) => {
   const failureInfo = {
-    message,
-    error: error ? error.toString() : 'unknown'
+    originalMessage: message,
+    error: error ? error.toString() : 'unknown',
+    filename
   };
-  logger.error(`Failed message: ${failureInfo.error}`);
-  if (failureQueueURL) {
-    failQueue.add(failureInfo);
-  }
+  logger.debug(`Adding item to failure queue: ${failureInfo.error}`);
+  await failQueue.add(failureInfo);
 };
 
 /*
@@ -269,12 +268,9 @@ const checkFileExistence = async function(filename) {
 /* start the message loop */
 logger.debug(`Message queue: ${messageQueueURL}`);
 logger.debug(`Failure queue: ${failureQueueURL}`);
-if (!messageQueueURL) {
-  logger.error(`Message queue URL missing. Cannot initialize mesage queue.`);
+if (!messageQueueURL || !failureQueueURL) {
+  logger.error(`Queue URL(s) missing. Cannot initialize mesage queue.`);
 } else {
-  if (!failureQueueURL) {
-    logger.warn(`Failure queue URL missing. Failed events will be discarded.`);
-  }
   logger.info('Starting message loop...');
   receiveMessage();
 }
