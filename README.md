@@ -17,5 +17,6 @@ AWS_REGION=us-east-1  // Use the same region as the scout-ua server
 OPUS_BIT_RATE=24000
 POLLY_S3_BUCKET=      // Must match the POLLY_S3_BUCKET value used by the scout-ua server
 SQS_QUEUE=            // The full URL of the SQS FIFO message queue where scout-ua sends transcode requests
-SQS_FAILURE_QUEUE     // Full URL of an SQS FIFO queue where failed messages will be stored for later review
+SQS_FAILURE_QUEUE     // (optional) Full URL of an SQS FIFO queue where failed messages 
+                      // are stored for later retry or review
 ```
