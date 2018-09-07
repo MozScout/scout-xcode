@@ -46,8 +46,8 @@ const failQueue = new SqsQueue(failureQueueURL, 'scout');
  */
 let transcodeInProgress = false;
 const receiveMessage = () => {
+  logger.debug('.');
   sqs.receiveMessage(sqsParams, async function(err, data) {
-    logger.debug('.');
     if (err) {
       logger.error(err);
     }
@@ -77,11 +77,12 @@ const receiveMessage = () => {
               try {
                 transcodeInProgress = true;
                 const newFileName = await transcodeFile(jsonBody.filename);
-                transcodeInProgress = false;
                 await storeFile(newFileName);
               } catch (err) {
                 const errString = `Transcoding error: ${err}`;
                 await addToFailureQueue(message, errString, jsonBody.filename);
+              } finally {
+                transcodeInProgress = false;
               }
             }
           }
