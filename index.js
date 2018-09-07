@@ -61,7 +61,7 @@ const receiveMessage = () => {
           }
         } catch (err) {
           logger.error(`Message format err: ${err}`);
-          addToFailureQueue(message, err);
+          handleMessageFailure(message, err);
         }
 
         // create transcode request if the file doesn't already exist
@@ -75,7 +75,7 @@ const receiveMessage = () => {
               })
               .catch(err => {
                 const errString = `Transcoding error: ${err}`;
-                addToFailureQueue(message, errString);
+                handleMessageFailure(message, errString);
               });
           }
         }
@@ -107,19 +107,21 @@ const removeFromMessageQueue = function(message) {
       if (err) {
         const errString = `removeFromMessageQueue error: ${err}`;
         logger.error(errString);
-        addToFailureQueue(message, errString);
+        handleMessageFailure(message, errString);
       }
     }
   );
 };
 
-const addToFailureQueue = (message, error) => {
+const handleMessageFailure = (message, error) => {
   const failureInfo = {
     message,
     error: error ? error.toString() : 'unknown'
   };
-  logger.debug(`Adding item to failure queue: ${failureInfo.error}`);
-  failQueue.add(failureInfo);
+  logger.error(`Failed message: ${failureInfo.error}`);
+  if (failureQueueURL) {
+    failQueue.add(failureInfo);
+  }
 };
 
 /*
@@ -267,9 +269,12 @@ const checkFileExistence = async function(filename) {
 /* start the message loop */
 logger.debug(`Message queue: ${messageQueueURL}`);
 logger.debug(`Failure queue: ${failureQueueURL}`);
-if (!messageQueueURL || !failureQueueURL) {
-  logger.error(`Queue URL(s) missing. Cannot initialize mesage queue.`);
+if (!messageQueueURL) {
+  logger.error(`Message queue URL missing. Cannot initialize mesage queue.`);
 } else {
+  if (!failureQueueURL) {
+    logger.warn(`Failure queue URL missing. Failed events will be discarded.`);
+  }
   logger.info('Starting message loop...');
   receiveMessage();
 }
