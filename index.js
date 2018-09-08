@@ -66,7 +66,7 @@ const receiveMessage = () => {
             }
           } catch (err) {
             logger.error(`Message format err: ${err}`);
-            await addToFailureQueue(message, err);
+            await handleMessageFailure(message, err);
           }
 
           // create transcode request if the file doesn't already exist
@@ -80,7 +80,11 @@ const receiveMessage = () => {
                 await storeFile(newFileName);
               } catch (err) {
                 const errString = `Transcoding error: ${err}`;
-                await addToFailureQueue(message, errString, jsonBody.filename);
+                await handleMessageFailure(
+                  message,
+                  errString,
+                  jsonBody.filename
+                );
               } finally {
                 transcodeInProgress = false;
               }
@@ -113,14 +117,16 @@ const removeFromMessageQueue = message => {
   );
 };
 
-const addToFailureQueue = async (message, error, filename) => {
+const handleMessageFailure = async (message, error, filename) => {
   const failureInfo = {
     originalMessage: message,
     error: error ? error.toString() : 'unknown',
     filename
   };
-  logger.debug(`Adding item to failure queue: ${failureInfo.error}`);
-  await failQueue.add(failureInfo);
+  logger.error(`Failed message: ${failureInfo.error}`);
+  if (failureQueueURL) {
+    await failQueue.add(failureInfo);
+  }
 };
 
 /*
@@ -268,9 +274,12 @@ const checkFileExistence = async function(filename) {
 /* start the message loop */
 logger.debug(`Message queue: ${messageQueueURL}`);
 logger.debug(`Failure queue: ${failureQueueURL}`);
-if (!messageQueueURL || !failureQueueURL) {
-  logger.error(`Queue URL(s) missing. Cannot initialize mesage queue.`);
+if (!messageQueueURL) {
+  logger.error(`Message queue URL missing. Unable to proceed.`);
 } else {
+  if (!failureQueueURL) {
+    logger.warn(`Failure queue URL missing. Failed events will be discarded.`);
+  }
   logger.info('Starting message loop...');
   receiveMessage();
 }
